@@ -1,0 +1,143 @@
+<!doctype html>
+<html lang="no">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Bunn og dybde Austevoll</title>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Condensed:wght@600&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+<style>
+/* Layout: kart i full skjerm; kompakt topplinje, lagpanel nederst, trykk i kartet gir dybde + bunntype */
+:root{
+  --bg:#eef3f5; --panel:#ffffff; --fg:#13262e; --muted:#5a6e77; --line:#d4dfe3; --accent:#0d6b86; --hard:#c4572e;
+  --display:"IBM Plex Sans Condensed","Arial Narrow",sans-serif;
+  --body:"IBM Plex Sans",system-ui,sans-serif;
+}
+@media (prefers-color-scheme: dark){:root{--bg:#0c161b;--panel:#13222a;--fg:#e3edf0;--muted:#91a6af;--line:#26393f;--accent:#56b9d6;--hard:#ec8a5f;color-scheme:dark}}
+*{box-sizing:border-box}
+html,body{height:100%;margin:0}
+body{background:var(--bg);color:var(--fg);font:14px/1.45 var(--body)}
+#map{position:absolute;inset:0}
+.bar{position:absolute;z-index:1000;top:calc(env(safe-area-inset-top,0px) + 10px);left:max(10px,env(safe-area-inset-left,0px));right:max(10px,env(safe-area-inset-right,0px));
+  display:flex;gap:8px;align-items:center;pointer-events:none}
+.title{pointer-events:auto;background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:7px 11px;min-width:0}
+.title b{font:600 15px var(--display);letter-spacing:.02em;display:block}
+.title small{color:var(--muted);font-size:11.5px}
+.bar button{pointer-events:auto;margin-left:auto;font:500 13px var(--body);color:var(--accent);background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:9px 11px;cursor:pointer;white-space:nowrap}
+.panel{position:absolute;z-index:1000;left:0;right:0;bottom:0;background:var(--panel);border-top:1px solid var(--line);
+  padding-block:8px calc(10px + env(safe-area-inset-bottom,0px));padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));
+  max-height:52%;overflow-y:auto}
+.panel summary{font:600 15px var(--display);cursor:pointer;padding:6px 0;list-style-position:inside}
+.row{display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid var(--line)}
+.row label{flex:1;min-width:0}
+.row small{display:block;color:var(--muted);font-size:12px}
+.row input[type=checkbox]{width:20px;height:20px;accent-color:var(--accent)}
+.row input[type=range]{width:88px;accent-color:var(--accent)}
+h3{font:600 13px var(--display);letter-spacing:.06em;text-transform:uppercase;color:var(--muted);margin:12px 0 6px}
+.legend{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:6px 12px}
+.legend span{display:flex;align-items:center;gap:7px;font-size:12.5px}
+.legend i{width:16px;height:16px;border-radius:3px;border:1px solid rgba(0,0,0,.2);flex:none}
+.legend .tag{font-size:10.5px;font-weight:600;color:var(--hard);margin-left:auto}
+.note{color:var(--muted);font-size:12px;margin:8px 0 0}
+.links{display:flex;flex-wrap:wrap;gap:8px;margin-top:10px}
+.links a{font:500 13px var(--body);color:var(--accent);border:1px solid var(--line);border-radius:6px;padding:6px 10px;text-decoration:none}
+.leaflet-popup-content{font:13px/1.45 var(--body);margin:12px 14px}
+.pop b{font:600 14px var(--display);display:block;margin-bottom:4px}
+.pop dl{display:grid;grid-template-columns:auto 1fr;gap:3px 10px;margin:0}
+.pop dt{color:#5a6e77}.pop dd{margin:0;font-weight:600;font-variant-numeric:tabular-nums}
+.pop .hint{color:#5a6e77;font-size:11.5px;margin-top:6px}
+button:focus-visible,a:focus-visible,input:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+</style>
+</head>
+<body>
+<div id="map"></div>
+<div class="bar">
+  <div class="title"><b>Bunn og dybde</b><small>Trykk i kartet for dybde og bunntype</small></div>
+  <button id="loc" type="button">Min posisjon</button>
+</div>
+<details class="panel" id="panel">
+  <summary>Kartlag og tegnforklaring</summary>
+  <div class="row"><input type="checkbox" id="l-depth" checked><label for="l-depth">Dybdesjattering<small>Kartverket: mørkere blått er dypere</small></label></div>
+  <div class="row"><input type="checkbox" id="l-contours" checked><label for="l-contours">Dybdekoter og dybdetall<small>Kartverket, mer detaljert når du zoomer inn</small></label></div>
+  <div class="row"><input type="checkbox" id="l-seabed" checked><label for="l-seabed">Bunntype<small>NGU kornstørrelse, juster gjennomsiktighet</small></label><input type="range" id="o-seabed" min="0.1" max="1" step="0.1" value="0.6" aria-label="Gjennomsiktighet bunntype"></div>
+
+  <h3>Bunntype, de vanligste rundt Austevoll</h3>
+  <div class="legend">
+    <span><i style="background:#f4b6b6"></i>Bart fjell<em class="tag">hard</em></span>
+    <span><i style="background:#f9d2c4"></i>Tynt sedimentdekke på fjell<em class="tag">hard</em></span>
+    <span><i style="background:#f2a7a7;background-image:radial-gradient(#333 1px,transparent 1.5px);background-size:6px 6px"></i>Stein og blokk<em class="tag">hard</em></span>
+    <span><i style="background:#c9743f;background-image:radial-gradient(#222 1px,transparent 1.5px);background-size:6px 6px"></i>Grus og stein<em class="tag">hard</em></span>
+    <span><i style="background:#9cbd5a;background-image:radial-gradient(#222 1px,transparent 1.5px);background-size:6px 6px"></i>Slam, sand, grus, stein, blokk</span>
+    <span><i style="background:#f0901f"></i>Grus</span>
+    <span><i style="background:#ffff7a"></i>Sand</span>
+    <span><i style="background:#ffff7a;background-image:repeating-linear-gradient(0deg,transparent 0 4px,#333 4px 5px)"></i>Slamholdig sand</span>
+    <span><i style="background:#6fa0b4;background-image:radial-gradient(#111 .8px,transparent 1.2px);background-size:3px 3px"></i>Sandholdig slam</span>
+    <span><i style="background:#8fd5f5;background-image:radial-gradient(#111 .8px,transparent 1.2px);background-size:5px 5px"></i>Grusholdig sandholdig slam</span>
+    <span><i style="background:#8fd5f5"></i>Slam</span>
+    <span><i style="background:#dce8ff"></i>Leire</span>
+  </div>
+  <p class="note">«Hard» = stein og fjell som hummer liker. Blått er blaut bunn der hysa beiter. Tomt felt betyr at NGU ikke har kartlagt området. Planleggingsverktøy, ikke navigasjonskart.</p>
+  <div class="links">
+    <a href="https://portal.fiskeridir.no/portal/apps/webappviewer/index.html?id=bed4faeea84e4d6dbc548d43cc134c96&amp;layer=Hummer+-+fredningsomr%C3%A5der" target="_blank" rel="noopener">Hummerfredning (Fiskeridir.)</a>
+    <a href="https://geo.ngu.no/kart/common_mobil/?_/kart/marin_mobil/__lang=nor::map=0" target="_blank" rel="noopener">Full tegnforklaring hos NGU</a>
+  </div>
+</details>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<script>
+const KV_WMS='https://wms.geonorge.no/skwms1/wms.dybdedata2';
+const NGU_WMS='https://geo.ngu.no/mapserver/MarinBunnsedimenterWMS/';
+let start={c:[60.07,5.27],z:12};
+try{const s=JSON.parse(localStorage.getItem('bd-view')||'null');if(s&&s.c)start=s;}catch(e){}
+const map=L.map('map',{zoomControl:false,maxZoom:18}).setView(start.c,start.z);
+['base','depth','seabed','contours'].forEach((n,i)=>map.createPane(n).style.zIndex=200+i*10);
+L.tileLayer('https://cache.kartverket.no/v1/wmts/1.0.0/topo/default/webmercator/{z}/{y}/{x}.png',{pane:'base',maxZoom:18,attribution:'© Kartverket · Bunntype © NGU'}).addTo(map);
+const layers={
+  depth:L.tileLayer.wms(KV_WMS,{pane:'depth',layers:'Dybdelag',format:'image/png',transparent:true,version:'1.1.1',tileSize:512,opacity:.75}),
+  seabed:L.tileLayer.wms(NGU_WMS+'?',{pane:'seabed',layers:'Kornstorrelse_Det',format:'image/png',transparent:true,version:'1.3.0',tileSize:512,opacity:.6}),
+  contours:L.tileLayer.wms(KV_WMS,{pane:'contours',layers:'Dybdekontur,Dybdepunkt,Kystkontur',format:'image/png',transparent:true,version:'1.1.1',tileSize:512})
+};
+for(const k of Object.keys(layers)){
+  const cb=document.getElementById('l-'+k);
+  const sync=()=>cb.checked?layers[k].addTo(map):map.removeLayer(layers[k]);
+  cb.addEventListener('change',sync);sync();
+}
+document.getElementById('o-seabed').addEventListener('input',e=>layers.seabed.setOpacity(+e.target.value));
+map.on('moveend',()=>{try{localStorage.setItem('bd-view',JSON.stringify({c:[map.getCenter().lat,map.getCenter().lng],z:map.getZoom()}));}catch(e){}});
+
+const pairs=t=>Object.fromEntries([...t.matchAll(/(\w+)\s*=\s*'([^']*)'/g)].map(m=>[m[1].toLowerCase(),m[2]]));
+async function depthAt(lat,lon){
+  const p=new URLSearchParams({SERVICE:'WMS',VERSION:'1.1.1',REQUEST:'GetFeatureInfo',LAYERS:'Dybdelag',QUERY_LAYERS:'Dybdelag',STYLES:'',SRS:'EPSG:4326',
+    BBOX:[lon-.0002,lat-.0001,lon+.0002,lat+.0001].join(','),WIDTH:101,HEIGHT:101,X:50,Y:50,INFO_FORMAT:'text/plain',FEATURE_COUNT:1});
+  const r=await fetch(KV_WMS+'?'+p,{signal:AbortSignal.timeout(12000)});const f=pairs(await r.text());
+  if(f.minimumsdybde===undefined)return null;return {min:+f.minimumsdybde,max:+f.maksimumsdybde};
+}
+async function bottomAt(lat,lon){
+  const p=new URLSearchParams({SERVICE:'WMS',VERSION:'1.1.1',REQUEST:'GetFeatureInfo',LAYERS:'Kornstorrelse_Det',QUERY_LAYERS:'Kornstorrelse_Det',STYLES:'',SRS:'EPSG:4326',
+    BBOX:[lon-.0002,lat-.0001,lon+.0002,lat+.0001].join(','),WIDTH:101,HEIGHT:101,X:50,Y:50,INFO_FORMAT:'text/plain',FEATURE_COUNT:1});
+  const r=await fetch(NGU_WMS+'?'+p,{signal:AbortSignal.timeout(12000)});const t=await r.text();const f=pairs(t);
+  const vals=Object.entries(f).filter(([k,v])=>v&&isNaN(+v)&&!/id$|dato|kode/.test(k)).map(([,v])=>v);
+  return vals[0]||null;
+}
+const fmtDepth=d=>!d?'Ingen dybdedata her':(d.min===d.max?d.min+' m':d.min+'–'+d.max+' m');
+map.on('click',async e=>{
+  const {lat,lng}=e.latlng;
+  const pop=L.popup({maxWidth:260}).setLatLng(e.latlng).setContent('<div class="pop"><b>Henter …</b></div>').openOn(map);
+  const [d,b]=await Promise.allSettled([depthAt(lat,lng),bottomAt(lat,lng)]);
+  const depth=d.status==='fulfilled'?fmtDepth(d.value):'Kunne ikke hente';
+  const bottom=b.status==='fulfilled'?(b.value||'Ikke kartlagt'):'Se fargen i kartet';
+  pop.setContent(`<div class="pop"><b>${lat.toFixed(4)}° N, ${lng.toFixed(4)}° Ø</b><dl><dt>Dybde</dt><dd>${depth}</dd><dt>Bunn</dt><dd>${bottom}</dd></dl><p class="hint">Dybden er et kartintervall fra Kartverket.</p></div>`);
+});
+
+let me;
+document.getElementById('loc').addEventListener('click',()=>{
+  if(!navigator.geolocation)return;
+  navigator.geolocation.getCurrentPosition(p=>{
+    const ll=[p.coords.latitude,p.coords.longitude];
+    if(me)me.setLatLng(ll);else me=L.circleMarker(ll,{radius:8,color:'#ffffff',weight:2,fillColor:'#1a7fd6',fillOpacity:1}).addTo(map);
+    map.setView(ll,15);
+  },()=>alert('Fikk ikke tilgang til posisjon.'),{enableHighAccuracy:true});
+});
+</script>
+</body>
+</html>
